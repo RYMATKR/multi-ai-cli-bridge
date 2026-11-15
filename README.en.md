@@ -43,7 +43,7 @@ A lightweight **MCP (Model Context Protocol) server** and shared **Agent Skill (
 ### 1. Clone & Install
 
 ```powershell
-git clone <YOUR_REPOSITORY_URL> multi-ai-cli-bridge
+git clone https://github.com/RYMATKR/multi-ai-cli-bridge.git multi-ai-cli-bridge
 cd multi-ai-cli-bridge
 .\install.ps1
 ```
@@ -77,3 +77,9 @@ Add the entry from [configs/antigravity.mcp_config.json](configs/antigravity.mcp
 ## License
 
 [MIT License](LICENSE)
+
+---
+
+## Credits
+
+This repository (the MCP bridge, orchestration skills, and documentation) was built with **Gemini 4 Hydrogen**.

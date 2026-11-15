@@ -43,7 +43,7 @@
 ### 1. クローン ＆ インストール
 
 ```powershell
-git clone <YOUR_REPOSITORY_URL> multi-ai-cli-bridge
+git clone https://github.com/RYMATKR/multi-ai-cli-bridge.git multi-ai-cli-bridge
 cd multi-ai-cli-bridge
 .\install.ps1
 ```
@@ -77,3 +77,9 @@ claude mcp add -s user --transport stdio multi-ai-bridge -- python "$env:USERPRO
 ## ライセンス
 
 [MIT License](LICENSE)
+
+---
+
+## クレジット
+
+本リポジトリ（MCPブリッジ・オーケストレーションスキル・ドキュメント）は **Gemini 4 Hydrogen** を使用して開発しました。
