@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "multi-ai-bridge": {
+      "command": "python",
+      "args": [
+        "<USER_HOME>/.local/share/multi-ai-bridge/server.py"
+      ]
+    }
+  }
+}
