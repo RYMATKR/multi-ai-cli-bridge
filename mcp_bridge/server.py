@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -137,12 +139,58 @@ def _run_cli(
         }
 
 
-MAX_OUTPUT_CHARS = 30000
+DEFAULT_MAX_OUTPUT_CHARS = 15000
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_MULTI_BLANK_RE = re.compile(r"\n{3,}")
+
+DEFAULT_IGNORE_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".multi_ai_cache",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "env",
+        "dist",
+        "build",
+        "target",
+        ".godot",
+        ".import",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".next",
+        ".nuxt",
+        "out",
+        "bin",
+        "obj",
+        "coverage",
+    }
+)
+
+KEY_PROJECT_FILES = (
+    "README.md",
+    "README.en.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "AGENTS.md",
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "Cargo.toml",
+    "go.mod",
+    "project.godot",
+    "Makefile",
+    "Dockerfile",
+)
 
 
-def _truncate_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+def _truncate_text(text: str, limit: int = DEFAULT_MAX_OUTPUT_CHARS) -> str:
     """Truncate overly long text so MCP tool responses stay within safe limits."""
-    if len(text) <= limit:
+    if limit <= 0 or len(text) <= limit:
         return text
     head = limit // 2
     tail = limit - head
@@ -150,23 +198,38 @@ def _truncate_text(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     return f"{text[:head]}\n\n... [truncated {omitted:,} chars] ...\n\n{text[-tail:]}"
 
 
-def _format_cli_result(agent_label: str, result: dict[str, Any]) -> tuple[str, bool]:
-    """Format CLI execution output as readable text for the orchestrating agent."""
+def _compress_output(text: str, max_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> str:
+    """Strip ANSI escape codes, trailing spaces, and excessive blank lines."""
+    if not text:
+        return text
+    cleaned = _ANSI_RE.sub("", text).replace("\r\n", "\n")
+    cleaned = "\n".join(line.rstrip() for line in cleaned.split("\n"))
+    cleaned = _MULTI_BLANK_RE.sub("\n\n", cleaned).strip()
+    return _truncate_text(cleaned, max_chars)
+
+
+def _format_cli_result(
+    agent_label: str,
+    result: dict[str, Any],
+    max_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+) -> tuple[str, bool]:
+    """Format CLI execution output as compact text for the orchestrating agent."""
     if result["ok"]:
         # Do not append stderr on success: Codex streams full command/file traces
         # and startup warnings to stderr, while stdout holds the final message.
         output = result["stdout"] or "(No stdout returned)"
-        return _truncate_text(output), False
+        return _compress_output(output, max_chars), False
 
+    err_limit = min(max_chars, 6000)
     lines = [
         f"{agent_label} execution failed (exit code: {result['returncode']}).",
         f"Command: {result['command']}",
         f"Working Directory: {result['cwd']}",
     ]
     if result["stdout"]:
-        lines.append(f"\n[stdout]\n{_truncate_text(result['stdout'], 8000)}")
+        lines.append(f"\n[stdout]\n{_compress_output(result['stdout'], err_limit)}")
     if result["stderr"]:
-        lines.append(f"\n[stderr]\n{_truncate_text(result['stderr'], 8000)}")
+        lines.append(f"\n[stderr]\n{_compress_output(result['stderr'], err_limit)}")
     return "\n".join(lines), True
 
 
@@ -205,6 +268,7 @@ def handle_ask_claude(args: dict[str, Any]) -> tuple[str, bool]:
     model = str(args.get("model", "")).strip()
     timeout_sec = int(args.get("timeout_sec", DEFAULT_TIMEOUT_SEC))
     use_sub = bool(args.get("use_subscription_only", True))
+    max_chars = int(args.get("max_chars", DEFAULT_MAX_OUTPUT_CHARS))
 
     cmd = [exe, "-p", prompt]
     if model:
@@ -214,7 +278,7 @@ def handle_ask_claude(args: dict[str, Any]) -> tuple[str, bool]:
         cmd.extend(["--tools", "Read,Grep,Glob"])
 
     result = _run_cli(cmd, cwd=cwd, timeout_sec=timeout_sec, use_subscription_only=use_sub)
-    return _format_cli_result("Claude Code", result)
+    return _format_cli_result("Claude Code", result, max_chars=max_chars)
 
 
 def _format_local_time(ts_or_iso: Any) -> str:
@@ -406,6 +470,125 @@ def handle_check_usage(_args: dict[str, Any]) -> tuple[str, bool]:
     return "\n\n".join(sections), False
 
 
+def _load_gitignore_names(root: Path) -> set[str]:
+    """Extract simple directory/file names from .gitignore to skip noise."""
+    names: set[str] = set()
+    gi = root / ".gitignore"
+    if not gi.is_file():
+        return names
+    try:
+        for raw in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith("!"):
+                continue
+            cleaned = line.strip("/")
+            if "/" not in cleaned and "*" not in cleaned and "?" not in cleaned:
+                names.add(cleaned)
+    except OSError:
+        pass
+    return names
+
+
+def handle_get_repo_summary(args: dict[str, Any]) -> tuple[str, bool]:
+    """Generate or return cached compact repository summary excluding heavy directories."""
+    cwd = args.get("cwd")
+    root = Path(cwd).resolve() if cwd and Path(cwd).is_dir() else Path.cwd().resolve()
+    max_depth = max(1, min(int(args.get("max_depth", 4)), 8))
+    max_files = max(20, min(int(args.get("max_files", 200)), 1000))
+    refresh = bool(args.get("refresh", False))
+
+    ignore_names = set(DEFAULT_IGNORE_DIRS) | _load_gitignore_names(root)
+
+    entries: list[tuple[str, int, float]] = []
+    ext_counts: Counter[str] = Counter()
+    key_files: list[str] = []
+    total_files = 0
+    latest_mtime = 0.0
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = Path(dirpath).relative_to(root)
+        depth = 0 if str(rel_dir) == "." else len(rel_dir.parts)
+
+        # Prune ignored directories in-place before descending.
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in ignore_names and not d.startswith(".git")
+        )
+        if depth >= max_depth:
+            dirnames[:] = []
+
+        for fname in sorted(filenames):
+            if fname in ignore_names:
+                continue
+            fpath = Path(dirpath) / fname
+            rel_path = fpath.relative_to(root).as_posix()
+            total_files += 1
+            try:
+                st = fpath.stat()
+                mtime = st.st_mtime
+                size = st.st_size
+            except OSError:
+                mtime = 0.0
+                size = 0
+
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+
+            ext = fpath.suffix.lower() or "(no ext)"
+            ext_counts[ext] += 1
+            if fname in KEY_PROJECT_FILES and depth <= 2:
+                key_files.append(rel_path)
+
+            if len(entries) < max_files:
+                entries.append((rel_path, size, mtime))
+
+    cache_dir = root / ".multi_ai_cache"
+    summary_path = cache_dir / "repo_summary.md"
+    meta_path = cache_dir / "meta.json"
+    fingerprint = {
+        "total_files": total_files,
+        "latest_mtime": round(latest_mtime, 3),
+        "max_depth": max_depth,
+        "max_files": max_files,
+    }
+
+    if not refresh and summary_path.is_file() and meta_path.is_file():
+        try:
+            old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if old_meta == fingerprint:
+                cached = summary_path.read_text(encoding="utf-8", errors="replace")
+                return f"[Cached Summary: {summary_path.as_posix()}]\n\n{cached}", False
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    lines = [
+        f"# Repository Summary: {root.name}",
+        f"- Root: `{root.as_posix()}`",
+        f"- Total scanned files (excluding ignored dirs): {total_files}",
+    ]
+    if key_files:
+        lines.append(f"- Key files: {', '.join(f'`{p}`' for p in key_files)}")
+
+    top_exts = ", ".join(f"`{ext}`: {cnt}" for ext, cnt in ext_counts.most_common(12))
+    if top_exts:
+        lines.append(f"- Extensions: {top_exts}")
+
+    lines.append(f"\n## File Tree (showing {len(entries)} of {total_files}, max_depth={max_depth})")
+    for rel_path, size, _ in entries:
+        lines.append(f"- {rel_path} ({size:,} B)")
+    if total_files > len(entries):
+        lines.append(f"- ... ({total_files - len(entries)} more files omitted)")
+
+    summary_text = "\n".join(lines)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(summary_text, encoding="utf-8")
+        meta_path.write_text(json.dumps(fingerprint, indent=2), encoding="utf-8")
+    except OSError as exc:
+        _log(f"Failed to write repo summary cache: {exc}")
+
+    return f"[Generated Summary: {summary_path.as_posix()}]\n\n{summary_text}", False
+
+
 def handle_ask_codex(args: dict[str, Any]) -> tuple[str, bool]:
     """Invoke OpenAI Codex CLI in non-interactive `exec` mode."""
     exe = _find_cli_executable("codex")
@@ -425,16 +608,20 @@ def handle_ask_codex(args: dict[str, Any]) -> tuple[str, bool]:
     timeout_sec = int(args.get("timeout_sec", DEFAULT_TIMEOUT_SEC))
     use_sub = bool(args.get("use_subscription_only", True))
     show_usage = bool(args.get("show_usage", True))
+    max_chars = int(args.get("max_chars", DEFAULT_MAX_OUTPUT_CHARS))
 
+    available = _get_codex_available_models()
+    valid_ids = [m["id"] for m in available]
     if model:
-        available = _get_codex_available_models()
-        valid_ids = [m["id"] for m in available]
         if valid_ids and model not in valid_ids:
             return (
                 f"Model `{model}` is not available for your current Codex plan. "
                 f"Available models: {', '.join(valid_ids)}",
                 True,
             )
+    elif valid_ids:
+        # Pin to the first available plan model so Codex CLI does not pick an unsupported default.
+        model = valid_ids[0]
 
     sandbox_mode = "read-only" if read_only else "workspace-write"
     # Pass prompt via stdin ('-') to avoid Windows .cmd newline truncation and length limits.
@@ -455,7 +642,7 @@ def handle_ask_codex(args: dict[str, Any]) -> tuple[str, bool]:
         use_subscription_only=use_sub,
         stdin_text=full_prompt,
     )
-    text, is_err = _format_cli_result("Codex CLI", result)
+    text, is_err = _format_cli_result("Codex CLI", result, max_chars=max_chars)
     if show_usage and not is_err:
         text += f"\n\n[Quota Remaining]\n{_get_codex_usage_summary()}"
     return text, is_err
@@ -496,6 +683,7 @@ def handle_ask_gemini(args: dict[str, Any]) -> tuple[str, bool]:
     timeout_sec = int(args.get("timeout_sec", DEFAULT_TIMEOUT_SEC))
     use_sub = bool(args.get("use_subscription_only", True))
     show_usage = bool(args.get("show_usage", True))
+    max_chars = int(args.get("max_chars", DEFAULT_MAX_OUTPUT_CHARS))
 
     if selected_backend == "agy":
         # Avoid `--mode plan` in non-interactive `-p` runs because it can stall waiting for plan approval.
@@ -515,7 +703,7 @@ def handle_ask_gemini(args: dict[str, Any]) -> tuple[str, bool]:
             cmd.extend(["--model", model])
         cmd.extend(["-p", prompt])
     result = _run_cli(cmd, cwd=cwd, timeout_sec=timeout_sec, use_subscription_only=use_sub)
-    text, is_err = _format_cli_result(f"Gemini ({selected_backend})", result)
+    text, is_err = _format_cli_result(f"Gemini ({selected_backend})", result, max_chars=max_chars)
     if show_usage and not is_err and selected_backend == "agy":
         text += f"\n\n[Quota Remaining]\n{_get_agy_usage_summary()}"
     return text, is_err
@@ -556,6 +744,37 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_repo_summary",
+        "description": (
+            "Generate or return a cached compact repository summary (.multi_ai_cache/repo_summary.md) "
+            "excluding noisy directories (.git, node_modules, __pycache__, .venv, etc.) to save tokens."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cwd": {
+                    "type": "string",
+                    "description": "Target repository root directory.",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum directory depth to list (default: 4).",
+                    "default": 4,
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": "Maximum number of file entries to list (default: 200).",
+                    "default": 200,
+                },
+                "refresh": {
+                    "type": "boolean",
+                    "description": "Force regenerate summary cache even if files have not changed.",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
         "name": "ask_claude",
         "description": (
             "Delegate a design, architecture review, or coding task to local Claude Code CLI "
@@ -590,6 +809,11 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "boolean",
                     "description": "Strip API key env vars so OAuth subscription is used (default: true).",
                     "default": True,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Maximum output characters after compression/trimming (default: 15000).",
+                    "default": 15000,
                 },
             },
             "required": ["prompt"],
@@ -630,6 +854,11 @@ TOOLS: list[dict[str, Any]] = [
                     "type": "boolean",
                     "description": "Strip API key env vars so OAuth subscription is used (default: true).",
                     "default": True,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Maximum output characters after compression/trimming (default: 15000).",
+                    "default": 15000,
                 },
             },
             "required": ["prompt"],
@@ -677,6 +906,11 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Strip API key env vars so OAuth subscription is used (default: true).",
                     "default": True,
                 },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Maximum output characters after compression/trimming (default: 15000).",
+                    "default": 15000,
+                },
             },
             "required": ["prompt"],
         },
@@ -687,6 +921,7 @@ TOOL_HANDLERS = {
     "check_ai_agents": handle_check_ai_agents,
     "list_models": handle_list_models,
     "check_usage": handle_check_usage,
+    "get_repo_summary": handle_get_repo_summary,
     "ask_claude": handle_ask_claude,
     "ask_codex": handle_ask_codex,
     "ask_gemini": handle_ask_gemini,

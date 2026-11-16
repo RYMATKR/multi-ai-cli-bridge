@@ -24,6 +24,7 @@
 | `check_ai_agents` | `claude`, `codex`, `agy`, `gemini` のインストール状態とバージョンを確認 |
 | `list_models` | 各CLIで利用可能なモデル一覧と現在のデフォルト設定を確認 |
 | `check_usage` | Antigravity (`agy`) と Codex の残り利用枠（`%`・リセット時刻）を確認 |
+| `get_repo_summary` | 不要ディレクトリを除外した軽量リポジトリ要約キャッシュを生成・取得 |
 | `ask_claude` | Claude Code CLI を非対話モード（`claude -p`）で呼び出し |
 | `ask_codex` | OpenAI Codex CLI を非対話モード（`codex exec -`）で呼び出し |
 | `ask_gemini` | Antigravity CLI (`agy`) または Gemini CLI (`gemini`) を呼び出し |

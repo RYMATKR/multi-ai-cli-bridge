@@ -24,6 +24,7 @@ A lightweight **MCP (Model Context Protocol) server** and shared **Agent Skill (
 | `check_ai_agents` | Check installation status and versions of `claude`, `codex`, `agy`, and `gemini` |
 | `list_models` | List available models and configured defaults for each CLI |
 | `check_usage` | Check remaining quota percentages and reset times for `agy` and `codex` |
+| `get_repo_summary` | Generate or return cached compact repo summary excluding noisy directories |
 | `ask_claude` | Invoke Claude Code CLI in non-interactive mode (`claude -p`) |
 | `ask_codex` | Invoke OpenAI Codex CLI in non-interactive mode (`codex exec -`) |
 | `ask_gemini` | Invoke Antigravity CLI (`agy`) or Gemini CLI (`gemini`) |

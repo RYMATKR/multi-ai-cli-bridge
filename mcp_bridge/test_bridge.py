@@ -64,6 +64,7 @@ def main() -> int:
         "check_ai_agents",
         "list_models",
         "check_usage",
+        "get_repo_summary",
         "ask_claude",
         "ask_codex",
         "ask_gemini",
