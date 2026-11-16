@@ -498,14 +498,17 @@ def handle_ask_gemini(args: dict[str, Any]) -> tuple[str, bool]:
     show_usage = bool(args.get("show_usage", True))
 
     if selected_backend == "agy":
+        # Avoid `--mode plan` in non-interactive `-p` runs because it can stall waiting for plan approval.
         if read_only:
-            cmd = [exe, "--mode", "plan"]
+            cmd = [exe, "--mode", "auto"]
+            ro_prefix = "[Read-Only Mode: Do NOT create, edit, or delete any files. Only inspect and reply.]\n\n"
+            effective_prompt = prompt if "DO NOT CREATE, EDIT" in prompt.upper() else ro_prefix + prompt
         else:
-            # Use 'auto' mode and skip permission prompts so non-interactive edits do not stall waiting for approval.
             cmd = [exe, "--mode", "auto", "--dangerously-skip-permissions"]
+            effective_prompt = prompt
         if model:
             cmd.extend(["--model", model])
-        cmd.extend(["-p", prompt])
+        cmd.extend(["-p", effective_prompt])
     else:
         cmd = [exe]
         if model:
@@ -657,7 +660,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "read_only": {
                     "type": "boolean",
-                    "description": "If true (default), run agy in plan mode; if false, run in auto mode with auto-approved edits.",
+                    "description": "If true (default), restrict agy via read-only instruction in auto mode; if false, allow auto-approved edits.",
                     "default": True,
                 },
                 "model": {
