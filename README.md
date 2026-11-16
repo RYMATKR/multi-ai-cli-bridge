@@ -67,11 +67,14 @@ claude mcp add -s user --transport stdio multi-ai-bridge -- python "$env:USERPRO
 
 ---
 
-## セキュリティ・利用上の注意
+## セキュリティ・利用規約上の注意
 
+* **Google Antigravity (`agy`) の利用規約について（重要）**:
+  * Google Antigravity 追加利用規約では、**Google が提供していないサードパーティ製ツールと組み合わせて Antigravity（OAuth サブスク認証）へアクセスする行為が禁止されており、アカウント停止（Antigravity / Gemini CLI）の対象になり得る**と明記されています。
+  * そのため、安全側の既定動作として **`ask_gemini` のデフォルトは `backend: "gemini"`（`GEMINI_API_KEY` 等の公式 API キー利用を推奨）** になっており、`agy` OAuth ブリッジはデフォルトで無効化されています。`agy` を利用する場合は、必ずご自身で利用規約をご確認のうえ、オプトイン（`allow_agy_oauth: true` または環境変数 `ALLOW_AGY_OAUTH_BRIDGE=1`）で自己責任にてご利用ください。
 * **ファイル編集権限について**: `read_only: false` を指定すると、`codex` は `--sandbox workspace-write`、`agy` は `--mode auto --dangerously-skip-permissions` で起動します。**必ず Git 管理下で差分を確認しながら運用してください。**
 * **秘密情報の取り扱い**: `.env`、APIキー、認証トークン、本番デプロイスクリプトなどを含むファイルはサブAIに渡さず、変更も司令塔（メインAI）のみで行ってください。
-* **利用規約**: 本プロジェクトは各社の公式CLIをローカルから呼び出すラッパーです。各サービスの利用規約および契約プランの上限の範囲内でご利用ください。
+* **利用規約の遵守**: 本プロジェクトは各社の公式CLIをローカルから呼び出すラッパーです。各サービスの最新の利用規約および契約プランの上限の範囲内でご利用ください。
 
 ---
 

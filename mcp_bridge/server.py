@@ -649,27 +649,40 @@ def handle_ask_codex(args: dict[str, Any]) -> tuple[str, bool]:
 
 
 def handle_ask_gemini(args: dict[str, Any]) -> tuple[str, bool]:
-    """Invoke Antigravity CLI (`agy`) or Gemini CLI (`gemini`) in non-interactive mode."""
-    backend = str(args.get("backend", "auto")).lower()
+    """Invoke Gemini CLI (`gemini`) or opt-in Antigravity CLI (`agy`) in non-interactive mode."""
+    backend = str(args.get("backend", "gemini")).lower()
+    allow_agy = bool(args.get("allow_agy_oauth", False)) or (
+        os.environ.get("ALLOW_AGY_OAUTH_BRIDGE") == "1"
+    )
     exe: str | None = None
     selected_backend = backend
 
     if backend == "auto":
-        exe = _find_cli_executable("agy")
+        exe = _find_cli_executable("gemini")
         if exe:
-            selected_backend = "agy"
-        else:
-            exe = _find_cli_executable("gemini")
             selected_backend = "gemini"
-    elif backend in ("agy", "gemini"):
-        exe = _find_cli_executable(backend)
+        elif allow_agy:
+            exe = _find_cli_executable("agy")
+            selected_backend = "agy"
+    elif backend == "gemini":
+        exe = _find_cli_executable("gemini")
+    elif backend == "agy":
+        if not allow_agy:
+            return (
+                "Antigravity (`agy`) OAuth bridge is disabled by default to avoid potential "
+                "Google Antigravity ToS issues with third-party tool access. "
+                "Use `backend='gemini'` with GEMINI_API_KEY, or explicitly opt in at your own risk "
+                "via `allow_agy_oauth: true` or env `ALLOW_AGY_OAUTH_BRIDGE=1`.",
+                True,
+            )
+        exe = _find_cli_executable("agy")
     else:
-        return f"Invalid backend `{backend}`. Choose from: auto, agy, gemini.", True
+        return f"Invalid backend `{backend}`. Choose from: gemini, agy, auto.", True
 
     if not exe:
         return (
-            "Neither Antigravity CLI (`agy`) nor Gemini CLI (`gemini`) was found. "
-            "Install `agy` or run `npm install -g @google/gemini-cli`.",
+            "Gemini CLI (`gemini`) was not found. Install it with `npm install -g @google/gemini-cli` "
+            "(and set GEMINI_API_KEY for API usage), or opt in to `agy` explicitly.",
             True,
         )
 
@@ -681,7 +694,9 @@ def handle_ask_gemini(args: dict[str, Any]) -> tuple[str, bool]:
     read_only = bool(args.get("read_only", True))
     model = str(args.get("model", "")).strip()
     timeout_sec = int(args.get("timeout_sec", DEFAULT_TIMEOUT_SEC))
-    use_sub = bool(args.get("use_subscription_only", True))
+    # Default to False for `gemini` so GEMINI_API_KEY works out of the box when set.
+    default_use_sub = selected_backend == "agy"
+    use_sub = bool(args.get("use_subscription_only", default_use_sub))
     show_usage = bool(args.get("show_usage", True))
     max_chars = int(args.get("max_chars", DEFAULT_MAX_OUTPUT_CHARS))
 
@@ -867,21 +882,26 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "ask_gemini",
         "description": (
-            "Delegate repository-wide analysis, documentation lookup, or design review to local "
-            "Antigravity CLI (`agy`) or Gemini CLI (`gemini`) using the signed-in subscription."
+            "Delegate analysis or coding tasks to Gemini CLI (`gemini`, recommended with GEMINI_API_KEY) "
+            "or opt-in Antigravity CLI (`agy`)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Instruction or analysis task for Gemini/Antigravity.",
+                    "description": "Instruction or analysis task for Gemini.",
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["auto", "agy", "gemini"],
-                    "description": "CLI backend to invoke (default: auto).",
-                    "default": "auto",
+                    "enum": ["gemini", "agy", "auto"],
+                    "description": "CLI backend to invoke (default: gemini).",
+                    "default": "gemini",
+                },
+                "allow_agy_oauth": {
+                    "type": "boolean",
+                    "description": "Explicit opt-in required to invoke `agy` OAuth CLI (default: false).",
+                    "default": False,
                 },
                 "cwd": {
                     "type": "string",

@@ -67,11 +67,14 @@ Add the entry from [configs/antigravity.mcp_config.json](configs/antigravity.mcp
 
 ---
 
-## Security & Disclaimers
+## Security, Terms of Service & Disclaimers
 
+* **Google Antigravity (`agy`) Terms of Service Notice (Important)**:
+  * Under the Google Antigravity Additional Terms of Service, accessing the service (including Antigravity OAuth) in combination with third-party tools or products not provided by Google is restricted and may lead to suspension or termination of your Antigravity and/or Gemini CLI accounts.
+  * For safety, **`ask_gemini` defaults to `backend: "gemini"` (recommended for use with an official `GEMINI_API_KEY`)**, and the `agy` OAuth bridge is disabled by default. If you choose to opt in (`allow_agy_oauth: true` or `ALLOW_AGY_OAUTH_BRIDGE=1`), please review Google's latest Terms of Service carefully and proceed at your own risk.
 * **File Edit Permissions**: When `read_only: false` is passed, `codex` runs with `--sandbox workspace-write` and `agy` runs with `--mode auto --dangerously-skip-permissions`. **Always work inside a Git-tracked repository and review diffs.**
 * **Secrets Handling**: Never pass `.env`, API keys, tokens, or production deployment scripts to sub-agents.
-* **Terms of Service**: This tool is a local wrapper around official CLIs. Use it strictly within the terms and rate limits of your respective subscriptions.
+* **Terms Compliance**: This tool is a local wrapper around official CLIs. Use it strictly within the terms and rate limits of your respective subscriptions or API agreements.
 
 ---
 
